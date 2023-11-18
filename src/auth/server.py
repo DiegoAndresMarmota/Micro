@@ -1,6 +1,7 @@
 import jwt
 import datetime
 import os
+from multiprocessing import AuthenticationError
 from flask import Flask, request
 from flask_mysqldb import MySQL
 
@@ -17,16 +18,26 @@ server.config["MYSQL_PORT"] = os.environ.get("MYSQL_PORT")
 #Login
 @server.route("/login", methods=["POST"])
 def login( auth: str) -> dict:
+    """
+    The `login` function takes in an authentication token, checks if the credentials are valid, and
+    returns a JWT token if the credentials are correct.
+    
+    :param auth: The `auth` parameter is a string that represents the authentication credentials. It is
+    used to authenticate the user during the login process
+    :type auth: str
+    :return: different values based on different conditions:
+    """
     try:
         auth = request.authorization
-        if not auth:
-            return "missing credentials", 401
+    except AuthenticationError:
+        return "missing credentials", 400
     
+    try:
         cur = mysql.connection.cursor()
         res = cur.execute(
             "SELECT email, password FROM journalist WHERE email=%s", (auth.journalist_name,)
         )
-        
+
         if res > 0:
             user_row = cur.fetchone()
             email = user_row[0]
@@ -45,6 +56,23 @@ def login( auth: str) -> dict:
 
 
 def createJWT(journalist_name: str, secret: str, authz: bool) -> dict:
+    """
+    The function `createJWT` generates a JSON Web Token (JWT) with the provided journalist name, secret,
+    and authorization flag, and returns a dictionary with a success message.
+    
+    :param journalist_name: The name of the journalist for whom the JWT token is being created
+    :type journalist_name: str
+    :param secret: The "secret" parameter is a string that is used as the secret key to encode and
+    decode the JWT token. It should be a secure and unique value that is known only to the server
+    :type secret: str
+    :param authz: The parameter `authz` is a boolean value that indicates whether the journalist has
+    administrative privileges or not. If `authz` is `True`, it means the journalist has administrative
+    privileges, and if it is `False`, it means the journalist does not have administrative privileges
+    :type authz: bool
+    :return: a dictionary with a message indicating whether the JWT token was created successfully or
+    not. If an exception is raised during the creation of the token, the function will return a
+    dictionary with an error message and an appropriate status code.
+    """
     try:
         return jwt.encode(
         {
@@ -95,7 +123,38 @@ def createJWT(journalist_name: str, secret: str, authz: bool) -> dict:
     
     finally:
         return {'message': "JWT Token Created Successfully"}, 201
+
+
+@server.route("/validate", method=["POST"])
+def validate(token: str) -> dict:
+    """
+    The function `validate` takes a token as input, decodes it using a secret key, and returns the
+    decoded token if it is valid, along with an appropriate status code and message.
     
+    :param token: The `token` parameter is a string that represents the JWT (JSON Web Token) that needs
+    to be validated
+    :type token: str
+    :return: a dictionary with a 'message' key and a corresponding value. The specific message being
+    returned depends on the condition that is met in the try-except block.
+    """
+    try:
+        encoded_jwt = request.headers.get("Authorization")
+    except Exception as e:
+        return {'message': "Missing credentials"}, 411
+    
+    try:
+        decoded = jwt.decode(
+            encoded_jwt, os.environ.get("JWT_SECRET"), algorithms=["HS256"]
+        )
+        return decoded, 200
+        
+    except jwt.ExpiredSignatureError as JWTExtendedException:
+        return {'message': "Credentials not authorized"}, 403
+    
+    finally:
+        return {'message': "Validate credentials"}, 202
+
+
 #Server Run
 if __name__ == "__main__":
     server.run(host="0.0.0.0", port=5000, debug=True)
